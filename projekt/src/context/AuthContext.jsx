@@ -1,0 +1,117 @@
+"use client";
+
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import {
+  apiLogin,
+  apiLogout,
+  apiGetMe,
+  getToken,
+  getUserId,
+  setUserId,
+  clearToken,
+  clearUserId,
+} from "@/lib/apiClient";
+
+// Auth-kontekst og hook
+
+const AuthContext = createContext(null);
+AuthContext.displayName = "AuthContext";
+
+export const useAuth = () => {
+  const ctx = useContext(AuthContext);
+  if (!ctx) {
+    throw new Error("useAuth must be used within <AuthProvider> ");
+  }
+  return ctx;
+};
+
+// AuthProvider: holder brugerstatus og login/logud-logik
+
+export function AuthProvider({ children }) {
+  const [user, setUser] = useState(null);
+  const [ready, setReady] = useState(false); 
+  const booted = useRef(false);
+
+  useEffect(() => {
+    if (booted.current) return;
+    booted.current = true;
+
+    async function boot() {
+      try {
+        const token = getToken();
+        const uid = getUserId();
+
+       
+        if (!token || !uid) {
+          setUser(null);
+          return;
+        }
+
+        const me = await apiGetMe();
+        if (me?.id || me?._id) {
+         
+          setUserId(me.id ?? me._id);
+        }
+        setUser(me);
+      } catch {
+        
+        clearToken();
+        clearUserId();
+        setUser(null);
+      } finally {
+        setReady(true);
+      }
+    }
+
+    boot();
+
+    
+    function onStorage(e) {
+      if (e.key === "swaphub_token" || e.key === "swaphub_user_id") {
+        booted.current = false;
+        setReady(false);
+        boot();
+      }
+    }
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  async function signIn(email, password) {
+    await apiLogin(email, password);  
+    const me = await apiGetMe();       
+    if (me?.id || me?._id) setUserId(me.id ?? me._id);
+    setUser(me);
+    return me;
+  }
+
+  async function signOut() {
+    try {
+      await apiLogout();
+    } finally {
+      setUser(null);
+      window.location.replace("/");    
+    }
+  }
+
+  const value = useMemo(
+    () => ({
+      user,
+      isLoggedIn: !!user,
+      ready,             
+      loading: !ready,    
+      signIn,
+      signOut,
+      refresh: async () => {
+        const me = await apiGetMe();
+        if (me?.id || me?._id) setUserId(me.id ?? me._id);
+        setUser(me);
+        return me;
+      },
+    }),
+    [user, ready]
+  );
+// Udstil kontekst til underliggende komponenter
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
